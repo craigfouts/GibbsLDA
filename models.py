@@ -118,13 +118,27 @@ class GibbsLDA():
         self._init_labels(X, n_docs, n_words, vocab_size)
         self._init_dists(X, n_docs, n_words, vocab_size)
         for _ in tqdm(range(n_steps)) if verbose == 1 else range(n_steps):
-            self._sample_topics()
-            self._sample_docs(X, n_docs, n_words)
+            # self._sample_topics()
+            # self._sample_docs(X, n_docs, n_words)
+            for d in range(n_docs):
+                for n in range(n_words):
+                    old_label, word_value = self.word_labels_[d, n], X[d, n]
+                    if self.topic_word_counts_[old_label, word_value] < 2 or self.doc_topic_counts_[d, old_label] < 2:
+                        continue
+                    self._decrement_counts(d, old_label, word_value)
+                    topic_probs = (self.doc_topic_counts_[d] + self.docs_prior)/(self.doc_topic_counts_[d] + self.docs_prior).sum()
+                    word_probs = (self.topic_word_counts_ + self.topics_prior)[:, word_value]/(self.topic_word_counts_ + self.topics_prior).sum(-1)
+                    probs = topic_probs*word_probs/(topic_probs*word_probs).sum()
+                    new_label = self._sample_label_categorical(probs)
+                    self.word_labels_[d, n] = new_label
+                    self._increment_counts(d, new_label, word_value)
         return self
     
     def transform(self, _=None):
-        doc_labels = self.doc_topic_dist_.argmax(-1)
-        return doc_labels
+        # doc_labels = self.doc_topic_dist_.argmax(-1)
+        # return doc_labels
+        doc_labels = (self.doc_topic_counts_ + self.docs_prior)/(self.doc_topic_counts_ + self.docs_prior).sum()
+        return doc_labels.argmax(-1)
     
 class PyroLDA():
     def __init__(self, n_topics, vocab_size, batch_size=150):
