@@ -3,7 +3,6 @@ import pyro
 import pyro.distributions as dist
 import pyro.distributions.constraints as constraints
 import torch
-from pyro.distributions import Categorical, Dirichlet
 from pyro.infer import SVI, TraceEnum_ELBO
 from pyro.optim import Adam
 from tqdm import tqdm
@@ -47,6 +46,7 @@ class GibbsLDA():
         probs = self._sample_dists(doc, value)
         label = np.random.choice(probs.shape[0], p=probs)
         self.word_labels_[doc, word] = label
+        self.likelihood_log_[-1] += probs[label]
         return label
 
     def _sample_words(self, X, doc, n_words):
@@ -60,6 +60,7 @@ class GibbsLDA():
         return self.word_labels_
 
     def _sample_docs(self, X, n_docs, n_words, sample_words=True):
+        self.likelihood_log_.append(0.)
         concentrations = self.docs_prior + self.doc_topic_counts_
         for d in range(n_docs):
             self.doc_topic_dist_[d] = np.random.dirichlet(concentrations[d])
@@ -119,6 +120,7 @@ class CollapsedGibbsLDA():
         self.doc_topic_counts_ = None
         self.topic_word_dist_ = None
         self.doc_topic_dist_ = None
+        self.likelihood_log_ = []
     
     def _decrement_counts(self, doc, label, value):
         self.topic_word_counts_[label, value] -= 1
@@ -142,6 +144,7 @@ class CollapsedGibbsLDA():
         probs = self._sample_dists(doc, value)
         label = np.random.choice(probs.shape[0], p=probs)
         self.word_labels_[doc, word] = label
+        self.likelihood_log_[-1] += probs[label]
         return label
     
     def _sample_words(self, X, n_words, doc):
@@ -155,6 +158,7 @@ class CollapsedGibbsLDA():
         return self.word_labels_
     
     def _sample_docs(self, X, n_docs, n_words):
+        self.likelihood_log_.append(0.)
         for d in range(n_docs):
             self._sample_words(X, n_words, d)
         return self.doc_topic_dist_
