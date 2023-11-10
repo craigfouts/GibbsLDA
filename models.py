@@ -16,15 +16,15 @@ class GibbsLDA():
         self.word_labels_ = None
         self.topic_word_counts_ = None
         self.doc_topic_counts_ = None
-        self.topic_word_dist_ = None
-        self.doc_topic_dist_ = None
+        self.topic_word_dists_ = None
+        self.doc_topic_dists_ = None
         self.likelihood_log_ = []
 
     def _sample_topics(self):
         concentrations = self.topics_prior + self.topic_word_counts_
         for k in range(self.n_topics):
-            self.topic_word_dist_[k] = np.random.dirichlet(concentrations[k])
-        return self.topic_word_dist_
+            self.topic_word_dists_[k] = np.random.dirichlet(concentrations[k])
+        return self.topic_word_dists_
 
     def _decrement_counts(self, doc, label, value):
         self.topic_word_counts_[label, value] -= 1
@@ -36,11 +36,13 @@ class GibbsLDA():
         self.doc_topic_counts_[doc, label] += 1
         return self.topic_word_counts_, self.doc_topic_counts_
     
-    def _sample_dists(self, doc, value):
+    def _sample_dists(self, doc, value, normalize=True):
         topic_word_dist = self.topic_word_counts_[:, value]/self.topic_word_counts_.sum(-1)
         doc_topic_dist = self.doc_topic_counts_[doc]/self.doc_topic_counts_[doc].sum()
         probs = topic_word_dist*doc_topic_dist
-        return probs/probs.sum()
+        if normalize:
+            return probs/probs.sum()
+        return probs
 
     def _sample_word(self, doc, word, value):
         probs = self._sample_dists(doc, value)
@@ -63,10 +65,10 @@ class GibbsLDA():
         self.likelihood_log_.append(0.)
         concentrations = self.docs_prior + self.doc_topic_counts_
         for d in range(n_docs):
-            self.doc_topic_dist_[d] = np.random.dirichlet(concentrations[d])
+            self.doc_topic_dists_[d] = np.random.dirichlet(concentrations[d])
             if sample_words:
                 self._sample_words(X, d, n_words)
-        return self.doc_topic_dist_
+        return self.doc_topic_dists_
 
     def _set_priors(self, vocab_size):
         if self.topics_prior is None:
@@ -89,11 +91,11 @@ class GibbsLDA():
         return self.word_labels_, self.topic_word_counts_, self.doc_topic_counts_
 
     def _init_dists(self, X, n_docs, n_words):
-        self.topic_word_dist_ = np.zeros_like(self.topic_word_counts_, dtype=np.float32)
+        self.topic_word_dists_ = np.zeros_like(self.topic_word_counts_, dtype=np.float32)
         self._sample_topics()
-        self.doc_topic_dist_ = np.zeros_like(self.doc_topic_counts_, dtype=np.float32)
+        self.doc_topic_dists_ = np.zeros_like(self.doc_topic_counts_, dtype=np.float32)
         self._sample_docs(X, n_docs, n_words, sample_words=False)
-        return self.topic_word_dist_, self.doc_topic_dist_
+        return self.topic_word_dists_, self.doc_topic_dists_
 
     def fit(self, X, n_steps=100, verbose=1):
         n_docs, n_words, vocab_size = *X.shape, np.unique(X).shape[0]
@@ -106,7 +108,7 @@ class GibbsLDA():
         return self
     
     def transform(self, _=None):
-        doc_labels = self.doc_topic_dist_.argmax(-1)
+        doc_labels = self.doc_topic_dists_.argmax(-1)
         return doc_labels
     
 class CollapsedGibbsLDA():
@@ -118,8 +120,8 @@ class CollapsedGibbsLDA():
         self.word_labels_ = None
         self.topic_word_counts_ = None
         self.doc_topic_counts_ = None
-        self.topic_word_dist_ = None
-        self.doc_topic_dist_ = None
+        self.topic_word_dists_ = None
+        self.doc_topic_dists_ = None
         self.likelihood_log_ = []
     
     def _decrement_counts(self, doc, label, value):
@@ -132,13 +134,15 @@ class CollapsedGibbsLDA():
         self.doc_topic_counts_[doc, label] += 1
         return self.topic_word_counts_, self.doc_topic_counts_
     
-    def _sample_dists(self, doc, value):
+    def _sample_dists(self, doc, value, normalize=True):
         word_concentration = self.topic_word_counts_ + self.topics_prior
-        self.topic_word_dist_[:, value] = word_concentration[:, value]/word_concentration.sum(-1)
+        self.topic_word_dists_[:, value] = word_concentration[:, value]/word_concentration.sum(-1)
         topic_concentration = self.doc_topic_counts_[doc] + self.docs_prior
-        self.doc_topic_dist_[doc] = topic_concentration/topic_concentration.sum()
-        probs = self.topic_word_dist_[:, value]*self.doc_topic_dist_[doc]
-        return probs/probs.sum()
+        self.doc_topic_dists_[doc] = topic_concentration/topic_concentration.sum()
+        probs = self.topic_word_dists_[:, value]*self.doc_topic_dists_[doc]
+        if normalize:
+            return probs/probs.sum()
+        return probs
 
     def _sample_word(self, doc, word, value):
         probs = self._sample_dists(doc, value)
@@ -161,7 +165,7 @@ class CollapsedGibbsLDA():
         self.likelihood_log_.append(0.)
         for d in range(n_docs):
             self._sample_words(X, n_words, d)
-        return self.doc_topic_dist_
+        return self.doc_topic_dists_
     
     def _set_priors(self, vocab_size):
         if self.topics_prior is None:
@@ -184,9 +188,9 @@ class CollapsedGibbsLDA():
         return self.word_labels_, self.topic_word_counts_, self.doc_topic_counts_
     
     def _init_dists(self):
-        self.topic_word_dist_ = np.zeros_like(self.topic_word_counts_, dtype=np.float32)
-        self.doc_topic_dist_ = np.zeros_like(self.doc_topic_counts_, dtype=np.float32)
-        return self.topic_word_dist_, self.doc_topic_dist_
+        self.topic_word_dists_ = np.zeros_like(self.topic_word_counts_, dtype=np.float32)
+        self.doc_topic_dists_ = np.zeros_like(self.doc_topic_counts_, dtype=np.float32)
+        return self.topic_word_dists_, self.doc_topic_dists_
     
     def fit(self, X, n_steps=100, verbose=1):
         n_docs, n_words, vocab_size = *X.shape, np.unique(X).shape[0]
@@ -198,7 +202,7 @@ class CollapsedGibbsLDA():
         return self
     
     def transform(self, _=None):
-        doc_labels = self.doc_topic_dist_.argmax(-1)
+        doc_labels = self.doc_topic_dists_.argmax(-1)
         return doc_labels
     
 class PyroLDA():
