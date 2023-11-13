@@ -5,9 +5,10 @@ import pyro.distributions.constraints as constraints
 import torch
 from pyro.infer import SVI, TraceEnum_ELBO
 from pyro.optim import Adam
+from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 
-class GibbsSLDA():
+class GrimsonSLDA():
     def __init__(self, n_topics, topics_prior=None, docs_prior=None):
         self.n_topics = n_topics
         self.topics_prior = topics_prior
@@ -98,6 +99,8 @@ class GibbsSLDA():
         return self.topic_word_dists_, self.doc_topic_dists_
 
     def fit(self, X, n_steps=100, verbose=1):
+
+
         n_docs, n_words, vocab_size = *X.shape, np.unique(X).shape[0]
         self._set_priors(vocab_size)
         self._init_labels(X, n_docs, n_words, vocab_size)
