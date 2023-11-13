@@ -104,7 +104,7 @@ class GibbsSLDA():
         self._init_dists(X, n_docs, n_words)
         for _ in tqdm(range(n_steps)) if verbose == 1 else range(n_steps):
             self._sample_topics()
-            # self._sample_docs(X, n_docs, n_words)
+            self._sample_docs(X, n_docs, n_words)
             
         return self
     
