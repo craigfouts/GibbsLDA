@@ -24,10 +24,12 @@ def visualize_data(data, labels, title='Title', size=32, show_ax=True):
     plt.title(title)
     plt.show()
 
-def visualize_log(log, title='Title', x_label='X-Label', y_label='Y-Label'):
+def visualize_log(log, title='Title', x_label=None, y_label=None):
     x = np.arange(len(log))
     plt.plot(x, log)
     plt.title(title)
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
+    if x_label is not None:
+        plt.xlabel(x_label)
+    if y_label is not None:
+        plt.ylabel(y_label)
     plt.show()
