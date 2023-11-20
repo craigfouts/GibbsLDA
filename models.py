@@ -5,8 +5,103 @@ import pyro.distributions.constraints as constraints
 import torch
 from pyro.infer import SVI, TraceEnum_ELBO
 from pyro.optim import Adam
+from scipy.cluster.vq import kmeans, vq
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
+
+class GibbsSLDA(BaseEstimator, TransformerMixin):
+    def __init__(self, n_topics, n_docs=150, vocab_size=25, vocab_steps=100, sigma=1., alpha=None, beta=None):
+        self.n_topics = n_topics
+        self.n_docs = n_docs
+        self.vocab_size = vocab_size
+        self.vocab_steps = vocab_steps
+        self.sigma = sigma
+        self.alpha = 1/n_docs if alpha is None else alpha
+        self.beta = 1/n_topics if beta is None else beta
+
+        self.library_ = None
+        self.doc_locs_ = None
+        self.doc_topic_counts_ = np.zeros((n_docs, n_topics), dtype=np.int32)
+        self.topic_word_counts_ = np.zeros((n_topics, vocab_size), dtype=np.int32)
+        self.likelihood_log_ = []
+
+    def _shuffle(self, n_samples, words):
+        docs = np.random.choice(self.n_docs, (n_samples, 1))
+        topics = np.random.choice(self.n_topics, (n_samples, 1))
+        for i in range(self.n_docs):
+            idx, counts = np.unique(topics[docs == i], return_counts=True)
+            self.doc_topic_counts_[i, idx.astype(np.int32)] = counts
+        for i in range(self.n_topics):
+            idx, counts = np.unique(words[topics == i], return_counts=True)
+            self.topic_word_counts_[i, idx.astype(np.int32)] = counts
+        return docs, topics
+
+    def _build(self, X):
+        locs, markers, n_samples = X[:, :2], X[:, 2:], X.shape[0]
+        doc_idx = np.random.permutation(n_samples)[:self.n_docs]
+        self.doc_locs_ = locs[doc_idx]
+        codebook, _ = kmeans(markers, self.vocab_size, self.vocab_steps)
+        words = vq(markers, codebook)[0][None].T
+        docs, topics = self._shuffle(n_samples, words)
+        self.library_ = np.concatenate([locs, words, docs, topics], -1)
+        return n_samples
+    
+    def _sample_doc(self, loc, topic):
+        doc_probs = np.exp(-((loc - self.doc_locs_)**2).sum(-1)/self.sigma**2)
+        topic_probs = self.doc_topic_counts_[:, topic] + self.alpha
+        topic_probs /= (self.doc_topic_counts_ + self.alpha).sum(-1)
+        probs = doc_probs*topic_probs/(doc_probs*topic_probs).sum()
+        doc = np.random.choice(self.n_docs, p=probs)
+        return doc, probs[doc]
+
+    def _sample_topic(self, word, doc):
+        topic_probs = self.doc_topic_counts_[doc] + self.alpha
+        topic_probs /= (self.doc_topic_counts_[doc] + self.alpha).sum()
+        word_probs = self.topic_word_counts_[:, word] + self.beta
+        word_probs /= (self.topic_word_counts_ + self.beta).sum(-1)
+        probs = topic_probs*word_probs/(topic_probs*word_probs).sum()
+        topic = np.random.choice(self.n_topics, p=probs)
+        return topic, probs[topic]
+    
+    def _sample(self, loc, word, old_doc, old_topic):
+        new_doc, doc_likelihood = self._sample_doc(loc, old_topic)
+        new_topic, topic_likelihood = self._sample_topic(word, old_doc)
+        likelihood = doc_likelihood + topic_likelihood
+        return new_doc, new_topic, likelihood
+    
+    def _decrement(self, word, doc, topic):
+        self.doc_topic_counts_[doc, topic] -= 1
+        self.topic_word_counts_[topic, word] -= 1
+        return self.doc_topic_counts_, self.topic_word_counts_
+    
+    def _increment(self, word, doc, topic):
+        self.doc_topic_counts_[doc, topic] += 1
+        self.topic_word_counts_[topic, word] += 1
+        return self.doc_topic_counts_, self.topic_word_counts_
+    
+    def _step(self, n_samples):
+        self.likelihood_log_.append(0.)
+        for i in range(n_samples):
+            loc, (word, doc, topic) = self.library_[i, :2], self.library_[i, -3:].astype(np.int32)
+            self._decrement(word, doc, topic)
+            doc, topic, likelihood = self._sample(loc, word, doc, topic)
+            self._increment(word, doc, topic)
+            self.library_[i, -2:] = doc, topic
+            self.likelihood_log_[-1] += likelihood
+        return self.likelihood_log_[-1]
+    
+    def fit(self, X, n_steps=100, verbose=1):
+        n_samples = self._build(X)
+        for i in tqdm(range(n_steps)) if verbose == 1 else range(n_steps):
+            likelihood = self._step(n_samples)
+            if verbose == 2:
+                print('step', i, 'likelihood:', likelihood)
+        return self
+    
+    def transform(self, _=None):
+        topics = self.library_[:, -1]
+        return topics
 
 class GibbsLDA():
     def __init__(self, n_topics, topics_prior=None, docs_prior=None):
