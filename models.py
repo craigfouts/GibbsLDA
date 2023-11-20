@@ -26,9 +26,9 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         self.topic_word_counts_ = np.zeros((n_topics, vocab_size), dtype=np.int32)
         self.likelihood_log_ = []
 
-    def _shuffle(self, n_samples, words):
-        docs = np.random.choice(self.n_docs, (n_samples, 1))
-        topics = np.random.choice(self.n_topics, (n_samples, 1))
+    def _shuffle(self, words):
+        docs = np.random.choice(self.n_docs, (words.shape[0], 1))
+        topics = np.random.choice(self.n_topics, (words.shape[0], 1))
         for i in range(self.n_docs):
             idx, counts = np.unique(topics[docs == i], return_counts=True)
             self.doc_topic_counts_[i, idx.astype(np.int32)] = counts
@@ -38,14 +38,14 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         return docs, topics
 
     def _build(self, X):
-        locs, markers, n_samples = X[:, :2], X[:, 2:], X.shape[0]
-        doc_idx = np.random.permutation(n_samples)[:self.n_docs]
+        locs, markers = X[:, :2], X[:, 2:]
+        doc_idx = np.random.permutation(X.shape[0])[:self.n_docs]
         self.doc_locs_ = locs[doc_idx]
         codebook, _ = kmeans(markers, self.vocab_size, self.vocab_steps)
         words = vq(markers, codebook)[0][None].T
-        docs, topics = self._shuffle(n_samples, words)
+        docs, topics = self._shuffle(words)
         self.library_ = np.concatenate([locs, words, docs, topics], -1)
-        return n_samples
+        return self.library_
     
     def _sample_doc(self, loc, topic):
         doc_probs = np.exp(-((loc - self.doc_locs_)**2).sum(-1)/self.sigma**2)
@@ -80,10 +80,10 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         self.topic_word_counts_[topic, word] += 1
         return self.doc_topic_counts_, self.topic_word_counts_
     
-    def _step(self, n_samples):
+    def _step(self):
         self.likelihood_log_.append(0.)
-        for i in range(n_samples):
-            loc, (word, doc, topic) = self.library_[i, :2], self.library_[i, -3:].astype(np.int32)
+        for i in range(self.library_.shape[0]):
+            loc, (word, doc, topic) = self.library_[i, :2], self.library_[i, 2:].astype(np.int32)
             self._decrement(word, doc, topic)
             doc, topic, likelihood = self._sample(loc, word, doc, topic)
             self._increment(word, doc, topic)
@@ -92,9 +92,9 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         return self.likelihood_log_[-1]
     
     def fit(self, X, n_steps=100, verbose=1):
-        n_samples = self._build(X)
+        self._build(X)
         for i in tqdm(range(n_steps)) if verbose == 1 else range(n_steps):
-            likelihood = self._step(n_samples)
+            likelihood = self._step()
             if verbose == 2:
                 print('step', i, 'likelihood:', likelihood)
         return self
