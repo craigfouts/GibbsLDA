@@ -15,8 +15,8 @@ def shuffle_data(data, labels):
     idx = np.random.permutation(data.shape[0])
     return data[idx], labels[idx]
 
-def generate_data(n_samples, n_features, n_topics, scale=1., discretize=False, shuffle=True):
-    means = generate_means(n_features, n_topics)
+def generate_data(n_samples, n_features, n_topics, scale=1., means=None, shuffle=True):
+    means = means if means is not None else generate_means(n_features, n_topics)
     data, labels = np.empty((n_samples, n_features)), np.empty(n_samples, dtype=np.int32)
     sample_counts = partition(n_samples, n_topics)
     data[:sample_counts[0]] = np.random.normal(means[0], scale, (sample_counts[0], n_features))
@@ -27,9 +27,4 @@ def generate_data(n_samples, n_features, n_topics, scale=1., discretize=False, s
         labels[min_idx:max_idx] = i
     if shuffle:
         data, labels = shuffle_data(data, labels)
-    if discretize:
-        data = np.round(data).astype(np.int32)
-        data -= data.min()
-        vocab = np.unique(data)
-        return data, labels, vocab
     return data, labels
