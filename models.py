@@ -29,12 +29,12 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
     def _shuffle(self, words):
         docs = np.random.choice(self.n_docs, (words.shape[0], 1))
         topics = np.random.choice(self.n_topics, (words.shape[0], 1))
-        for i in range(self.n_docs):
-            idx, counts = np.unique(topics[docs == i], return_counts=True)
-            self.doc_topic_counts_[i, idx.astype(np.int32)] = counts
-        for i in range(self.n_topics):
-            idx, counts = np.unique(words[topics == i], return_counts=True)
-            self.topic_word_counts_[i, idx.astype(np.int32)] = counts
+        for d in range(self.n_docs):
+            idx, counts = np.unique(topics[docs == d], return_counts=True)
+            self.doc_topic_counts_[d, idx.astype(np.int32)] = counts
+        for k in range(self.n_topics):
+            idx, counts = np.unique(words[topics == k], return_counts=True)
+            self.topic_word_counts_[k, idx.astype(np.int32)] = counts
         return docs, topics
 
     def _build(self, X):
@@ -104,12 +104,16 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         return topics
 
 class GibbsLDA():
-    def __init__(self, n_topics, topics_prior=None, docs_prior=None):
+    def __init__(self, n_topics, n_words=10, vocab_size=25, vocab_steps=100, alpha=None, beta=None):
         self.n_topics = n_topics
-        self.topics_prior = topics_prior
-        self.docs_prior = docs_prior
+        self.n_words = n_words
+        self.vocab_size = vocab_size
+        self.vocab_steps = vocab_steps
+        self.alpha = 1/vocab_size if alpha is None else alpha
+        self.beta = 1/n_topics if beta is None else beta
 
-        self.word_labels_ = None
+        self.library_ = None
+        self.word_labels_ = None       
         self.topic_word_counts_ = None
         self.doc_topic_counts_ = None
         self.topic_word_dists_ = None
@@ -117,24 +121,26 @@ class GibbsLDA():
         self.likelihood_log_ = []
 
     def _sample_topics(self):
-        concentrations = self.topics_prior + self.topic_word_counts_
+        concentrations = self.topic_word_counts_ + self.alpha
         for k in range(self.n_topics):
             self.topic_word_dists_[k] = np.random.dirichlet(concentrations[k])
         return self.topic_word_dists_
 
-    def _decrement_counts(self, doc, label, value):
+    def _decrement(self, doc, label, value):
         self.topic_word_counts_[label, value] -= 1
         self.doc_topic_counts_[doc, label] -= 1
         return self.topic_word_counts_, self.doc_topic_counts_
 
-    def _increment_counts(self, doc, label, value):
+    def _increment(self, doc, label, value):
         self.topic_word_counts_[label, value] += 1
         self.doc_topic_counts_[doc, label] += 1
         return self.topic_word_counts_, self.doc_topic_counts_
     
     def _sample_dists(self, doc, value, normalize=True):
-        topic_word_dist = self.topic_word_counts_[:, value]/self.topic_word_counts_.sum(-1)
-        doc_topic_dist = self.doc_topic_counts_[doc]/self.doc_topic_counts_[doc].sum()
+        word_concentration = self.topic_word_counts_ + self.alpha
+        topic_concentration = self.doc_topic_counts_ + self.beta
+        topic_word_dist = word_concentration[:, value]/word_concentration.sum(-1)
+        doc_topic_dist = topic_concentration[doc]/topic_concentration[doc].sum()
         probs = topic_word_dist*doc_topic_dist
         if normalize:
             return probs/probs.sum()
@@ -147,60 +153,59 @@ class GibbsLDA():
         self.likelihood_log_[-1] += probs[label]
         return label
 
-    def _sample_words(self, X, doc, n_words):
-        for n in range(n_words):
-            old_label, word_value = self.word_labels_[doc, n], X[doc, n]
-            if self.topic_word_counts_[old_label, word_value] < 2 or self.doc_topic_counts_[doc, old_label] < 2:
-                continue
-            self._decrement_counts(doc, old_label, word_value)
+    def _sample_words(self, doc):
+        for n in range(self.n_words):
+            old_label, word_value = self.word_labels_[doc, n], self.library_[doc, n]
+            self._decrement(doc, old_label, word_value)
             new_label = self._sample_word(doc, n, word_value)
-            self._increment_counts(doc, new_label, word_value)
+            self._increment(doc, new_label, word_value)
         return self.word_labels_
 
-    def _sample_docs(self, X, n_docs, n_words, sample_words=True):
-        self.likelihood_log_.append(0.)
-        concentrations = self.docs_prior + self.doc_topic_counts_
-        for d in range(n_docs):
+    def _sample_docs(self, n_samples, sample_words=True):
+        concentrations = self.doc_topic_counts_ + self.beta
+        for d in range(n_samples):
             self.doc_topic_dists_[d] = np.random.dirichlet(concentrations[d])
             if sample_words:
-                self._sample_words(X, d, n_words)
+                self._sample_words(d)
         return self.doc_topic_dists_
+    
+    def _sample(self, n_samples, sample_words=True):
+        topic_word_dists = self._sample_topics()
+        doc_topic_dists = self._sample_docs(n_samples, sample_words)
+        return topic_word_dists, doc_topic_dists
 
-    def _set_priors(self, vocab_size):
-        if self.topics_prior is None:
-            self.topics_prior = np.ones(vocab_size)/vocab_size
-        if self.docs_prior is None:
-            self.docs_prior = np.ones(self.n_topics)/self.n_topics
-        return self.topics_prior, self.docs_prior
-
-    def _init_labels(self, X, n_docs, n_words, vocab_size):
-        probs = np.ones(self.n_topics)/self.n_topics
-        self.word_labels_ = np.random.choice(self.n_topics, (n_docs, n_words), p=probs)
-        self.topic_word_counts_ = np.zeros((self.n_topics, vocab_size), dtype=np.int32)
-        for k in range(self.n_topics):
-            idx, counts = np.unique(X[self.word_labels_ == k], return_counts=True)
-            self.topic_word_counts_[k, idx] = counts
-        self.doc_topic_counts_ = np.zeros((n_docs, self.n_topics), dtype=np.int32)
-        for d in range(n_docs):
-            idx, counts = np.unique(self.word_labels_[d], return_counts=True)
-            self.doc_topic_counts_[d, idx] = counts
-        return self.word_labels_, self.topic_word_counts_, self.doc_topic_counts_
-
-    def _init_dists(self, X, n_docs, n_words):
+    def _shuffle(self, n_samples):
+        labels = np.random.choice(self.n_topics, (n_samples, self.n_words))
+        self.topic_word_counts_ = np.zeros((self.n_topics, self.vocab_size), dtype=np.int32)
+        self.doc_topic_counts_ = np.zeros((n_samples, self.n_topics), dtype=np.int32)
         self.topic_word_dists_ = np.zeros_like(self.topic_word_counts_, dtype=np.float32)
-        self._sample_topics()
         self.doc_topic_dists_ = np.zeros_like(self.doc_topic_counts_, dtype=np.float32)
-        self._sample_docs(X, n_docs, n_words, sample_words=False)
-        return self.topic_word_dists_, self.doc_topic_dists_
+        for k in range(self.n_topics):
+            idx, counts = np.unique(self.library_[labels == k], return_counts=True)
+            self.topic_word_counts_[k, idx] = counts
+        for d in range(n_samples):
+            idx, counts = np.unique(labels[d], return_counts=True)
+            self.doc_topic_counts_[d, idx] = counts
+        self._sample(n_samples, sample_words=False)
+        return labels
+    
+    def _build(self, X):
+        codebook, _ = kmeans(X[:, 2:], self.vocab_size, self.vocab_steps)
+        neighbors = NearestNeighbors(n_neighbors=self.n_words).fit(X)
+        _, neighbor_idx = neighbors.kneighbors(X)
+        self.library_ = np.zeros((X.shape[0], self.n_words), dtype=np.int32)
+        for i in range(X.shape[0]):
+            self.library_[i], _ = vq(X[neighbor_idx, 2:][i], codebook)
+        self.word_labels_ = self._shuffle(X.shape[0])
+        return self.library_, self.word_labels_
 
     def fit(self, X, n_steps=100, verbose=1):
-        n_docs, n_words, vocab_size = *X.shape, np.unique(X).shape[0]
-        self._set_priors(vocab_size)
-        self._init_labels(X, n_docs, n_words, vocab_size)
-        self._init_dists(X, n_docs, n_words)
-        for _ in tqdm(range(n_steps)) if verbose == 1 else range(n_steps):
-            self._sample_topics()
-            self._sample_docs(X, n_docs, n_words)
+        self._build(X)
+        for i in tqdm(range(n_steps)) if verbose == 1 else range(n_steps):
+            self.likelihood_log_.append(0.)
+            self._sample(X.shape[0])
+            if verbose == 2:
+                print('step', i, 'likelihood:', self.likelihood_log_[-1])
         return self
     
     def transform(self, _=None):
