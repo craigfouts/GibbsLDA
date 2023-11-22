@@ -48,7 +48,8 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         return self.library_
     
     def _sample_doc(self, loc, topic):
-        doc_probs = np.exp(-((loc - self.doc_locs_)**2).sum(-1)/self.sigma**2)
+        # doc_probs = np.exp(-((loc - self.doc_locs_)**2).sum(-1)/self.sigma**2)
+        doc_probs = self.sigma**2/(((loc - self.doc_locs_)**2).sum(-1) + 1e-10)
         topic_probs = self.doc_topic_counts_[:, topic] + self.alpha
         topic_probs /= (self.doc_topic_counts_ + self.alpha).sum(-1)
         probs = doc_probs*topic_probs/(doc_probs*topic_probs).sum()
