@@ -6,12 +6,13 @@ import torch
 from pyro.infer import SVI, TraceEnum_ELBO
 from pyro.optim import Adam
 from scipy.cluster.vq import kmeans, vq
+from scipy.spatial.distance import cdist
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 
 class GibbsSLDA(BaseEstimator, TransformerMixin):
-    def __init__(self, n_topics, n_docs=150, vocab_size=25, vocab_steps=100, sigma=1., alpha=None, beta=None):
+    def __init__(self, n_topics, n_docs=150, vocab_size=25, vocab_steps=10, sigma=1., alpha=None, beta=None):
         self.n_topics = n_topics
         self.n_docs = n_docs
         self.vocab_size = vocab_size
@@ -25,6 +26,14 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         self.doc_topic_counts_ = np.zeros((n_docs, n_topics), dtype=np.int32)
         self.topic_word_counts_ = np.zeros((n_topics, vocab_size), dtype=np.int32)
         self.likelihood_log_ = []
+
+    def _featurize(self, locs, markers):
+        dists = cdist(locs, locs)
+        weights = np.exp(-dists**2/self.sigma**2)
+        features = np.zeros_like(markers)
+        for i in range(locs.shape[0]):
+            features[i] = (weights[i]*markers.T).T.mean(0)
+        return features
 
     def _shuffle(self, words):
         docs = np.random.choice(self.n_docs, (words.shape[0], 1))
@@ -41,15 +50,15 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         locs, markers = X[:, :2], X[:, 2:]
         doc_idx = np.random.permutation(X.shape[0])[:self.n_docs]
         self.doc_locs_ = locs[doc_idx]
-        codebook, _ = kmeans(markers, self.vocab_size, self.vocab_steps)
-        words = vq(markers, codebook)[0][None].T
+        features = self._featurize(locs, markers)
+        codebook, _ = kmeans(features, self.vocab_size, self.vocab_steps)
+        words = vq(features, codebook)[0][None].T
         docs, topics = self._shuffle(words)
         self.library_ = np.concatenate([locs, words, docs, topics], -1)
         return self.library_
     
     def _sample_doc(self, loc, topic):
-        # doc_probs = np.exp(-((loc - self.doc_locs_)**2).sum(-1)/self.sigma**2)
-        doc_probs = self.sigma**2/(((loc - self.doc_locs_)**2).sum(-1) + 1e-10)
+        doc_probs = self.sigma**2/(((loc - self.doc_locs_)**2).sum(-1) + 1e-100)
         topic_probs = self.doc_topic_counts_[:, topic] + self.alpha
         topic_probs /= (self.doc_topic_counts_ + self.alpha).sum(-1)
         probs = doc_probs*topic_probs/(doc_probs*topic_probs).sum()
