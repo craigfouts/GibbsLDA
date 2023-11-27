@@ -6,7 +6,7 @@ from scipy.optimize import linear_sum_assignment
 def map_labels(X_labels, Y_labels):
     scores = confusion_matrix(Y_labels, X_labels)
     row, col = linear_sum_assignment(scores, maximize=True)
-    labels = np.empty_like(X_labels)
+    labels = np.zeros_like(X_labels)
     for i in row:
         labels[Y_labels == i] = col[i]
     return labels
