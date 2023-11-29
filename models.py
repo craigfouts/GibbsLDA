@@ -24,20 +24,22 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         self.library_ = None
         self.doc_imgs_ = None
         self.doc_locs_ = None
-        self.doc_topic_counts_ = np.zeros((n_docs, n_topics), dtype=np.int32)
-        self.topic_word_counts_ = np.zeros((n_topics, vocab_size), dtype=np.int32)
+        self.doc_topic_counts_ = None
+        self.topic_word_counts_ = None
         self.likelihood_log_ = []
 
     def _featurize(self, imgs, locs, markers):
         mask = (cdist(imgs, imgs) == 0).astype(np.int32)
         dists = cdist(locs, locs)
         weights = mask*np.exp(-(dists/self.sigma)**2)
-        features = (markers.T@weights).T
+        features = weights.T@markers
         return features
 
     def _shuffle(self, words):
         docs = np.random.choice(self.n_docs, (words.shape[0], 1))
         topics = np.random.choice(self.n_topics, (words.shape[0], 1))
+        self.doc_topic_counts_ = np.zeros((self.n_docs, self.n_topics), dtype=np.int32)
+        self.topic_word_counts_ = np.zeros((self.n_topics, self.vocab_size), dtype=np.int32)
         for d in range(self.n_docs):
             idx, counts = np.unique(topics[docs == d], return_counts=True)
             self.doc_topic_counts_[d, idx.astype(np.int32)] = counts
@@ -48,18 +50,14 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
 
     def _build(self, X):
         imgs, locs, markers = X[:, :1], X[:, 1:3], X[:, 3:]
-        n_imgs = np.unique(imgs).shape[0]
-        # locs, markers = X[:, :2], X[:, 2:]
+        self.n_docs = np.unique(imgs).shape[0]*self.n_docs
         doc_idx = np.random.permutation(X.shape[0])[:self.n_docs]
-        # doc_idx = np.random.permutation(X.shape[0])[:self.n_docs]
-        self.doc_imgs_ = imgs[doc_idx]
-        self.doc_locs_ = locs[doc_idx]
+        self.doc_imgs_, self.doc_locs_ = imgs[doc_idx], locs[doc_idx]
         features = self._featurize(imgs, locs, markers)
         codebook, _ = kmeans(features, self.vocab_size, self.vocab_steps)
         words = vq(features, codebook)[0][None].T
         docs, topics = self._shuffle(words)
         self.library_ = np.concatenate([imgs, locs, words, docs, topics], -1)
-        # self.library_ = np.concatenate([locs, words, docs, topics], -1)
         return self.library_
     
     def _sample_doc(self, img, loc, topic, eta=1e-100):
