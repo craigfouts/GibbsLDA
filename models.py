@@ -114,7 +114,6 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         return self
     
     def transform(self, _=None):
-        # topics = self.library_[:, -1]
         topics = np.zeros(self.library_.shape[0], dtype=np.int32)
         for i in range(self.library_.shape[0]):
             word, doc = self.library_[i, 3:5].astype(np.int32)
