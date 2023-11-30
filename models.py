@@ -60,27 +60,27 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         self.library_ = np.concatenate([imgs, locs, words, docs, topics], -1)
         return self.library_
     
-    def _sample_doc(self, img, loc, topic, eta=1e-100):
+    def _sample_doc(self, img, loc, topic, eta=1e-100, maximize=False):
         mask = (self.doc_imgs_ == img).astype(np.int32).T[0]
         doc_probs = mask*self.sigma**2/(((loc - self.doc_locs_)**2).sum(-1) + eta)
         topic_probs = self.doc_topic_counts_[:, topic] + self.alpha
         topic_probs /= (self.doc_topic_counts_ + self.alpha).sum(-1)
         probs = doc_probs*topic_probs/(doc_probs*topic_probs).sum()
-        doc = np.random.choice(self.n_docs, p=probs)
+        doc = np.argmax(probs) if maximize else np.random.choice(self.n_docs, p=probs)
         return doc, probs[doc]
 
-    def _sample_topic(self, word, doc):
+    def _sample_topic(self, word, doc, maximize=False):
         topic_probs = self.doc_topic_counts_[doc] + self.alpha
         topic_probs /= (self.doc_topic_counts_[doc] + self.alpha).sum()
         word_probs = self.topic_word_counts_[:, word] + self.beta
         word_probs /= (self.topic_word_counts_ + self.beta).sum(-1)
         probs = topic_probs*word_probs/(topic_probs*word_probs).sum()
-        topic = np.random.choice(self.n_topics, p=probs)
+        topic = np.argmax(probs) if maximize else np.random.choice(self.n_topics, p=probs)
         return topic, probs[topic]
     
-    def _sample(self, img, loc, word, old_doc, old_topic):
-        new_doc, doc_likelihood = self._sample_doc(img, loc, old_topic)
-        new_topic, topic_likelihood = self._sample_topic(word, old_doc)
+    def _sample(self, img, loc, word, old_doc, old_topic, maximize=False):
+        new_doc, doc_likelihood = self._sample_doc(img, loc, old_topic, maximize=maximize)
+        new_topic, topic_likelihood = self._sample_topic(word, old_doc, maximize=maximize)
         likelihood = doc_likelihood + topic_likelihood
         return new_doc, new_topic, likelihood
     
@@ -114,7 +114,11 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         return self
     
     def transform(self, _=None):
-        topics = self.library_[:, -1]
+        # topics = self.library_[:, -1]
+        topics = np.zeros(self.library_.shape[0], dtype=np.int32)
+        for i in range(self.library_.shape[0]):
+            word, doc = self.library_[i, 3:5].astype(np.int32)
+            topics[i], _ = self._sample_topic(word, doc, True)
         return topics
 
 class GibbsLDA():
