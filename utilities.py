@@ -175,9 +175,13 @@ def visualize_datasets(X, X_labels, size=32, show_ax=True, filename=None, colorm
     if (len(X.shape) == 3 and X.shape[0] == 1):
         labels = X_labels[0] if len(X_labels.shape) > 1 else X_labels
         ax.scatter(X[0, :, 1], X[0, :, 2], s=size, c=labels, cmap=colormap)
+        if not show_ax:
+            ax.axis('off')
     elif len(X.shape) == 2:
         labels = X_labels[0] if len(X_labels.shape) > 1 else X_labels
         ax.scatter(X[:, 1], X[:, 2], s=size, c=labels, cmap=colormap)
+        if not show_ax:
+            ax.axis('off')
     else:
         for i in range(X.shape[0]):
             ax[i].scatter(X[i, :, 1], X[i, :, 2], s=size, c=X_labels[i], cmap=colormap)

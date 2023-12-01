@@ -93,7 +93,7 @@ class GibbsSLDA(BaseEstimator, TransformerMixin):
         self.doc_topic_counts_[doc, topic] += 1
         self.topic_word_counts_[topic, word] += 1
         return self.doc_topic_counts_, self.topic_word_counts_
-    
+
     def _step(self):
         self.likelihood_log_.append(0.)
         for i in range(self.library_.shape[0]):
